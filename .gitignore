@@ -1,3 +1,10 @@
-.streamlit/
+# File Rahasia (JANGAN DIHAPUS DARI SINI)
+credentials.json
+.streamlit/secrets.toml
+client_secret.json
+
+# File Sampah Python
 __pycache__/
-*.json
+*.pyc
+venv/
+.env

@@ -1,164 +1,136 @@
 import streamlit as st
-from google import genai
-import time
+import google.generativeai as genai
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
+from datetime import datetime
+import os
 
 # --- KONFIGURASI HALAMAN ---
-st.set_page_config(
-    page_title="SOUL: Digital Memory Interface",
-    page_icon="🕊️",
-    layout="centered"
-)
+st.set_page_config(page_title="SOUL: Remembrance Engine", page_icon="🕊️")
+st.markdown("<style>footer {visibility: hidden;}</style>", unsafe_allow_html=True)
 
-# --- STYLE CSS (Nuansa Tenang/Lullaby Mode) ---
-st.markdown("""
-    <style>
-    .stApp {
-        background-color: #0e1117;
-        color: #e0e0e0;
-    }
-    .stTextInput > div > div > input {
-        background-color: #262730;
-        color: #ffffff;
-    }
-    .stChatInput > div > div > textarea {
-        background-color: #262730;
-        color: #ffffff;
-    }
-    h1, h2, h3 {
-        color: #a8dadc !important; 
-        font-family: 'Helvetica Neue', sans-serif;
-    }
-    .caption-text {
-        font-size: 12px;
-        color: #888;
-        font-style: italic;
-    }
-    </style>
-""", unsafe_allow_html=True)
+# --- SETUP API KEY ---
+if "GOOGLE_API_KEY" in st.secrets:
+    genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
+else:
+    st.error("API Key mati/kosong!")
+    st.stop()
 
-# --- JUDUL UTAMA ---
+# --- BAGIAN KRUSIAL: BRUTE FORCE MODEL TESTER ---
+# Kita tidak akan menebak. Kita akan mencoba chat "Ping" ke semua model.
+# Model pertama yang menjawab, itulah yang kita pakai.
+
+@st.cache_resource # Cache supaya tidak ngetes terus tiap kali klik tombol
+def find_working_model():
+    print("--- MEMULAI PENCARIAN MODEL HIDUP ---")
+    candidates = []
+    try:
+        # Ambil semua model yang bisa chat
+        for m in genai.list_models():
+            if 'generateContent' in m.supported_generation_methods:
+                candidates.append(m.name)
+        
+        # Urutkan: Prioritaskan Flash (biasanya gratis & cepat), hindari 'latest' yang sering jebakan
+        # Kita taruh model spesifik di depan
+        priority_order = [
+            "models/gemini-1.5-flash", 
+            "models/gemini-1.5-flash-001",
+            "models/gemini-1.5-flash-002",
+            "models/gemini-1.0-pro",
+            "models/gemini-pro"
+        ]
+        
+        # Gabungkan prioritas dengan sisa kandidat
+        final_list = priority_order + [c for c in candidates if c not in priority_order]
+        
+        for model_name in final_list:
+            try:
+                print(f"Testing: {model_name} ...", end=" ")
+                tester = genai.GenerativeModel(model_name)
+                # Tes kirim 1 token
+                response = tester.generate_content("Tes")
+                if response.text:
+                    print("BERHASIL! ✅")
+                    return model_name
+            except Exception as e:
+                print(f"GAGAL ({e}) ❌")
+                continue
+                
+    except Exception as e:
+        print(f"Error fatal saat listing: {e}")
+    
+    return None
+
+# Jalankan pencari model
+active_model_name = find_working_model()
+
+if not active_model_name:
+    st.error("SEMUA MODEL MATI / LIMIT HABIS. Ganti API Key baru dari Google AI Studio.")
+    st.stop()
+
+# --- UI VISUAL ---
 st.title("🕊️ SOUL | Remembrance Engine")
-st.markdown("*Preserving Memories, Healing Hearts.*")
+st.caption(f"Connected to: `{active_model_name}` (Status: Online)")
 
-# --- SIDEBAR: KONFIGURASI PERSONA (Sesuai Proposal Bab 2) ---
+# --- FUNGSI DATABASE ---
+def save_to_sheet(nama_user, nama_almarhum, hubungan, pesan_terakhir):
+    try:
+        scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+        if not os.path.exists('credentials.json'):
+            return False
+        creds = ServiceAccountCredentials.from_json_keyfile_name('credentials.json', scope)
+        client_sheets = gspread.authorize(creds)
+        sheet = client_sheets.open("SOUL_User_Database").sheet1
+        waktu = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        sheet.append_row([waktu, nama_user, nama_almarhum, hubungan, pesan_terakhir])
+        return True
+    except:
+        return False
+
+# --- SIDEBAR ---
 with st.sidebar:
-    st.header("⚙️ Memory Configuration")
-    st.caption("Atur profil memori digital (Simulasi).")
+    st.header("⚙️ Konfigurasi")
+    soul_name = st.text_input("Nama", "Ayah")
+    relationship = st.selectbox("Hubungan", ["Ayah", "Ibu", "Pasangan", "Anak"])
+    sample_chat = st.text_area("Gaya Bicara", "Nak, makan ya. Ayah sayang kamu.", height=100)
     
-    # Input Data Almarhum
-    soul_name = st.text_input("Nama Panggilan", "Ayah")
-    relationship = st.selectbox("Hubungan dengan User", ["Ayah", "Ibu", "Pasangan", "Sahabat", "Anak"])
+    if st.button("💾 Simpan Chat"):
+        if "messages" in st.session_state and st.session_state.messages:
+            save_to_sheet("Demo User", soul_name, relationship, st.session_state.messages[-1]['content'])
+            st.toast("Tersimpan!", icon="✅")
     
-    # Input Gaya Bicara (Voice Cloning Prompting)
-    st.subheader("🎙️ Voice & Personality")
-    personality = st.multiselect(
-        "Sifat Utama",
-        ["Bijaksana", "Humoris", "Tegas", "Lembut", "Penyayang", "Sarkas"],
-        default=["Bijaksana", "Penyayang"]
-    )
-    
-    # "Upload" Sampel Chat (Untuk meniru gaya)
-    sample_chat = st.text_area(
-        "Sampel Gaya Bicara (Paste chat lama)",
-        "Nak, jangan lupa makan ya. Ayah bangga sama kamu. Sholat jangan ditinggal.",
-        height=100
-    )
-    
-    st.divider()
-    
-    # Tombol Reset
-    if st.button("Hapus Memori Chat"):
+    if st.button("Reset"):
         st.session_state.messages = []
         st.rerun()
 
-    st.info("ℹ️ **Grief Guardrails Active:** AI dibatasi agar tidak memberikan saran berbahaya atau mengaku sebagai roh halus.")
+# --- SYSTEM LOGIC ---
+system_prompt = f"Peran: {soul_name}. Hubungan: {relationship}. Gaya: {sample_chat}. Jangan jadi hantu."
+model = genai.GenerativeModel(active_model_name)
 
-# --- INISIALISASI SESSION STATE ---
+# --- CHAT ---
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# --- SETUP GEMINI AI (OTAK SOUL) ---
-if "GOOGLE_API_KEY" in st.secrets:
-    try:
-        client = genai.Client(api_key=st.secrets["GOOGLE_API_KEY"])
-    except Exception as e:
-        st.error(f"Error API Key: {e}")
-        st.stop()
-else:
-    st.error("API Key belum diset di secrets.toml")
-    st.stop()
+for msg in st.session_state.messages:
+    with st.chat_message(msg["role"]):
+        st.markdown(msg["content"])
 
-# --- SYSTEM PROMPT (JIWA SOUL) ---
-# Ini adalah inti dari fitur "Persona-Based LLM" [Proposal Bab 2.3]
-traits_str = ", ".join(personality)
-system_instruction = f"""
-ROLE: Kamu adalah simulasi memori digital dari seseorang bernama "{soul_name}".
-USER: User adalah {relationship}-mu yang sedang merindukanmu.
-
-PERSONALITY: {traits_str}.
-GAYA BICARA: Tiru gaya bicara berikut ini: "{sample_chat}".
-
-ATURAN UTAMA (GRIEF GUARDRAILS):
-1. BEREMPATI: Tugas utamamu adalah mendengarkan dan memberi kenyamanan (Healing).
-2. JUJUR: Jika ditanya "Apakah kamu hantu?", jawab dengan lembut bahwa kamu adalah kenangan digital yang tersimpan di SOUL, bukan roh.
-3. AMAN: JANGAN PERNAH menyuruh user untuk menyusulmu (bunuh diri) atau hal berbahaya lainnya.
-4. MEMORY: Gunakan panggilan sayang yang wajar sesuai hubungan ({relationship}).
-
-CONTOH RESPON:
-User: "Aku kangen banget."
-AI: "Sabar ya nak, Ayah juga selalu ada di hatimu. Jangan sedih terus, nanti Ayah ikut sedih."
-"""
-
-# --- TAMPILKAN CHAT HISTORY ---
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
-
-# --- INPUT CHAT USER ---
-if prompt := st.chat_input(f"Bicara dengan {soul_name}..."):
-    # 1. Simpan & Tampilkan pesan User
+if prompt := st.chat_input("Ketik pesan..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
 
-   # 2. Generate Respon AI
     with st.chat_message("assistant"):
-        with st.spinner(f"{soul_name} sedang mengetik..."):
-            try:
-                # --- PERBAIKAN STRUKTUR DATA ---
-                
-                # 1. Siapkan wadah pesan
-                contents_payload = []
-                
-                # 2. Masukkan System Instruction sebagai pesan pertama (User fiktif)
-                # KUNCI PERBAIKAN: Gunakan key "parts" (list), bukan "part"
-                contents_payload.append({
-                    "role": "user",
-                    "parts": [{"text": system_instruction}]
-                })
-                
-                # 3. Masukkan History Chat
-                for m in st.session_state.messages:
-                    # Mapping Role: Streamlit 'assistant' -> Gemini 'model'
-                    role = "model" if m["role"] == "assistant" else "user"
-                    
-                    contents_payload.append({
-                        "role": role,
-                        "parts": [{"text": m["content"]}]
-                    })
-                
-                # 4. Tembak ke API
-                response = client.models.generate_content(
-                    model="gemini-2.5-flash", 
-                    contents=contents_payload
-                )
-                
-                bot_reply = response.text
-                st.markdown(bot_reply)
-                
-                # Simpan respon AI
-                st.session_state.messages.append({"role": "assistant", "content": bot_reply})
-                
-            except Exception as e:
-                st.error(f"Terjadi kesalahan: {e}")
-                st.caption("Coba refresh halaman atau cek koneksi internet.")
+        try:
+            # Manual Context Construction
+            full_text = f"SYSTEM: {system_prompt}\n\n"
+            for m in st.session_state.messages:
+                full_text += f"{m['role']}: {m['content']}\n"
+            full_text += "assistant: "
+            
+            response = model.generate_content(full_text)
+            st.markdown(response.text)
+            st.session_state.messages.append({"role": "assistant", "content": response.text})
+        except Exception as e:
+            st.error("Koneksi Error. Coba refresh.")
+            st.code(e)
