@@ -4,6 +4,7 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime
 import os
+import pytz # Library zona waktu
 
 # --- KONFIGURASI HALAMAN ---
 st.set_page_config(page_title="SOUL: Remembrance Engine", page_icon="🕊️")
@@ -16,91 +17,65 @@ else:
     st.error("API Key mati/kosong!")
     st.stop()
 
-# --- BAGIAN KRUSIAL: BRUTE FORCE MODEL TESTER ---
-# Kita tidak akan menebak. Kita akan mencoba chat "Ping" ke semua model.
-# Model pertama yang menjawab, itulah yang kita pakai.
-
-@st.cache_resource # Cache supaya tidak ngetes terus tiap kali klik tombol
-def find_working_model():
-    print("--- MEMULAI PENCARIAN MODEL HIDUP ---")
-    candidates = []
-    try:
-        # Ambil semua model yang bisa chat
-        for m in genai.list_models():
-            if 'generateContent' in m.supported_generation_methods:
-                candidates.append(m.name)
-        
-        # Urutkan: Prioritaskan Flash (biasanya gratis & cepat), hindari 'latest' yang sering jebakan
-        # Kita taruh model spesifik di depan
-        priority_order = [
-            "models/gemini-1.5-flash", 
-            "models/gemini-1.5-flash-001",
-            "models/gemini-1.5-flash-002",
-            "models/gemini-1.0-pro",
-            "models/gemini-pro"
-        ]
-        
-        # Gabungkan prioritas dengan sisa kandidat
-        final_list = priority_order + [c for c in candidates if c not in priority_order]
-        
-        for model_name in final_list:
-            try:
-                print(f"Testing: {model_name} ...", end=" ")
-                tester = genai.GenerativeModel(model_name)
-                # Tes kirim 1 token
-                response = tester.generate_content("Tes")
-                if response.text:
-                    print("BERHASIL! ✅")
-                    return model_name
-            except Exception as e:
-                print(f"GAGAL ({e}) ❌")
-                continue
-                
-    except Exception as e:
-        print(f"Error fatal saat listing: {e}")
+# --- AUTO-DETECT MODEL (Supaya tidak Error 404) ---
+# Kode ini otomatis mencari model yang tersedia di akunmu
+active_model_name = "models/gemini-pro" # Default
+try:
+    available_models = []
+    for m in genai.list_models():
+        if 'generateContent' in m.supported_generation_methods:
+            available_models.append(m.name)
     
-    return None
+    # Cari yang terbaik dari daftar yang ada
+    priority = ["models/gemini-1.5-flash", "models/gemini-1.0-pro", "models/gemini-pro"]
+    for p in priority:
+        if p in available_models:
+            active_model_name = p
+            break
+except:
+    pass # Kalau gagal deteksi, pakai default gemini-pro
 
-# Jalankan pencari model
-active_model_name = find_working_model()
-
-if not active_model_name:
-    st.error("SEMUA MODEL MATI / LIMIT HABIS. Ganti API Key baru dari Google AI Studio.")
-    st.stop()
-
-# --- UI VISUAL ---
-st.title("🕊️ SOUL | Remembrance Engine")
-st.caption(f"Connected to: `{active_model_name}` (Status: Online)")
-
-# --- FUNGSI DATABASE (HYBRID: BISA LOCAL & STREAMLIT CLOUD) ---
+# --- FUNGSI DATABASE (HYBRID + WIB) ---
 def save_to_sheet(nama_user, nama_almarhum, hubungan, pesan_terakhir):
     try:
         scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
         
-        # SKENARIO 1: JIKA DI STREAMLIT CLOUD (PAKAI SECRETS)
+        # 1. CEK APAKAH DI CLOUD (SECRETS)
         if "gcp_service_account" in st.secrets:
-            creds_dict = dict(st.secrets["gcp_service_account"]) # Ubah ke dictionary standar
+            # Ubah format TOML Streamlit jadi Dictionary Python
+            creds_dict = dict(st.secrets["gcp_service_account"])
             creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-        
-        # SKENARIO 2: JIKA DI LOCAL LAPTOP (PAKAI FILE JSON)
+            
+        # 2. CEK APAKAH DI LAPTOP (FILE JSON)
         elif os.path.exists('credentials.json'):
             creds = ServiceAccountCredentials.from_json_keyfile_name('credentials.json', scope)
             
         else:
-            st.error("❌ Kunci Database Hilang! (Cek Secrets / File JSON)")
+            st.error("❌ Kunci Database Tidak Ditemukan!")
             return False
 
+        # 3. KONEKSI & BUKA SHEET
         client_sheets = gspread.authorize(creds)
         sheet = client_sheets.open("SOUL_User_Database").sheet1
-        waktu = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        sheet.append_row([waktu, nama_user, nama_almarhum, hubungan, pesan_terakhir])
+        
+        # 4. AMBIL WAKTU WIB (JAKARTA)
+        zona_waktu = pytz.timezone("Asia/Jakarta")
+        waktu_sekarang = datetime.now(zona_waktu)
+        waktu_teks = waktu_sekarang.strftime("%Y-%m-%d %H:%M:%S")
+        
+        # 5. TULIS KE SHEET
+        sheet.append_row([waktu_teks, nama_user, nama_almarhum, hubungan, pesan_terakhir])
         return True
         
     except Exception as e:
-        st.error(f"Database Error: {e}")
+        st.error(f"Gagal Simpan: {e}")
         return False
-    
-# --- SIDEBAR ---
+
+# --- UI VISUAL ---
+st.title("🕊️ SOUL | Remembrance Engine")
+st.caption(f"Connected to: `{active_model_name}`")
+
+# --- SIDEBAR KONFIGURASI ---
 with st.sidebar:
     st.header("⚙️ Konfigurasi")
     soul_name = st.text_input("Nama", "Ayah")
@@ -109,18 +84,19 @@ with st.sidebar:
     
     if st.button("💾 Simpan Chat"):
         if "messages" in st.session_state and st.session_state.messages:
-            save_to_sheet("Demo User", soul_name, relationship, st.session_state.messages[-1]['content'])
-            st.toast("Tersimpan!", icon="✅")
+            with st.spinner("Menyimpan ke Database..."):
+                if save_to_sheet("User Demo", soul_name, relationship, st.session_state.messages[-1]['content']):
+                    st.toast("Tersimpan! (Cek Google Sheet)", icon="✅")
     
     if st.button("Reset"):
         st.session_state.messages = []
         st.rerun()
 
-# --- SYSTEM LOGIC ---
+# --- LOGIKA AI ---
 system_prompt = f"Peran: {soul_name}. Hubungan: {relationship}. Gaya: {sample_chat}. Jangan jadi hantu."
 model = genai.GenerativeModel(active_model_name)
 
-# --- CHAT ---
+# --- CHAT ENGINE ---
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
@@ -135,7 +111,6 @@ if prompt := st.chat_input("Ketik pesan..."):
 
     with st.chat_message("assistant"):
         try:
-            # Manual Context Construction
             full_text = f"SYSTEM: {system_prompt}\n\n"
             for m in st.session_state.messages:
                 full_text += f"{m['role']}: {m['content']}\n"
@@ -145,5 +120,5 @@ if prompt := st.chat_input("Ketik pesan..."):
             st.markdown(response.text)
             st.session_state.messages.append({"role": "assistant", "content": response.text})
         except Exception as e:
-            st.error("Koneksi Error. Coba refresh.")
-            st.code(e)
+            st.error("Koneksi Error.")
+            st.info("Kemungkinan kuota habis atau sinyal buruk.")
