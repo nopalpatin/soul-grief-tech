@@ -121,17 +121,36 @@ if prompt := st.chat_input(f"Bicara dengan {soul_name}..."):
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # 2. Generate Respon AI
+   # 2. Generate Respon AI
     with st.chat_message("assistant"):
         with st.spinner(f"{soul_name} sedang mengetik..."):
             try:
-                # Panggil Model (Pakai Gemini 2.5 Flash biar cepat & pintar)
+                # --- PERBAIKAN STRUKTUR DATA ---
+                
+                # 1. Siapkan wadah pesan
+                contents_payload = []
+                
+                # 2. Masukkan System Instruction sebagai pesan pertama (User fiktif)
+                # KUNCI PERBAIKAN: Gunakan key "parts" (list), bukan "part"
+                contents_payload.append({
+                    "role": "user",
+                    "parts": [{"text": system_instruction}]
+                })
+                
+                # 3. Masukkan History Chat
+                for m in st.session_state.messages:
+                    # Mapping Role: Streamlit 'assistant' -> Gemini 'model'
+                    role = "model" if m["role"] == "assistant" else "user"
+                    
+                    contents_payload.append({
+                        "role": role,
+                        "parts": [{"text": m["content"]}]
+                    })
+                
+                # 4. Tembak ke API
                 response = client.models.generate_content(
                     model="gemini-2.5-flash", 
-                    contents=[
-                        {"role": "user", "part": {"text": system_instruction}}, # Inject Persona di awal
-                        *[{"role": m["role"], "part": {"text": m["content"]}} for m in st.session_state.messages] # History chat
-                    ]
+                    contents=contents_payload
                 )
                 
                 bot_reply = response.text
@@ -141,6 +160,5 @@ if prompt := st.chat_input(f"Bicara dengan {soul_name}..."):
                 st.session_state.messages.append({"role": "assistant", "content": bot_reply})
                 
             except Exception as e:
-                st.error(f"Koneksi terputus: {e}")
-                # Fallback ke model lama jika 2.5 belum ready di region tertentu
-                st.caption("Mencoba jalur cadangan...")
+                st.error(f"Terjadi kesalahan: {e}")
+                st.caption("Coba refresh halaman atau cek koneksi internet.")
