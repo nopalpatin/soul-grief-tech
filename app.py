@@ -72,21 +72,34 @@ if not active_model_name:
 st.title("🕊️ SOUL | Remembrance Engine")
 st.caption(f"Connected to: `{active_model_name}` (Status: Online)")
 
-# --- FUNGSI DATABASE ---
+# --- FUNGSI DATABASE (HYBRID: BISA LOCAL & STREAMLIT CLOUD) ---
 def save_to_sheet(nama_user, nama_almarhum, hubungan, pesan_terakhir):
     try:
         scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-        if not os.path.exists('credentials.json'):
+        
+        # SKENARIO 1: JIKA DI STREAMLIT CLOUD (PAKAI SECRETS)
+        if "gcp_service_account" in st.secrets:
+            creds_dict = dict(st.secrets["gcp_service_account"]) # Ubah ke dictionary standar
+            creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+        
+        # SKENARIO 2: JIKA DI LOCAL LAPTOP (PAKAI FILE JSON)
+        elif os.path.exists('credentials.json'):
+            creds = ServiceAccountCredentials.from_json_keyfile_name('credentials.json', scope)
+            
+        else:
+            st.error("❌ Kunci Database Hilang! (Cek Secrets / File JSON)")
             return False
-        creds = ServiceAccountCredentials.from_json_keyfile_name('credentials.json', scope)
+
         client_sheets = gspread.authorize(creds)
         sheet = client_sheets.open("SOUL_User_Database").sheet1
         waktu = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         sheet.append_row([waktu, nama_user, nama_almarhum, hubungan, pesan_terakhir])
         return True
-    except:
+        
+    except Exception as e:
+        st.error(f"Database Error: {e}")
         return False
-
+    
 # --- SIDEBAR ---
 with st.sidebar:
     st.header("⚙️ Konfigurasi")
