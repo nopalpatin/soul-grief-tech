@@ -63,7 +63,7 @@ with st.sidebar:
     relationship = st.selectbox("Hubungan", ["Ayah", "Ibu", "Pasangan", "Sahabat", "Anak"])
     
     st.header("🎭 Kepribadian")
-    sample_chat = st.text_area("Contoh Gaya Bicara", 
+    sample_chat = st.text_area("Ambil dari Chat Terakhir, Contoh:", 
                                "Nak, jangan lupa makan ya. Ayah bangga sama kamu. Sholat jangan ditinggal.", 
                                height=150)
     
@@ -90,6 +90,8 @@ Kamu adalah simulasi digital dari {soul_name}, seorang {relationship}.
 Tugasmu adalah memberikan kenyamanan.
 Gunakan gaya bahasa: "{sample_chat}".
 Jawablah dengan singkat (maksimal 3 kalimat), hangat, dan penuh empati.
+jangan terlalu formal atau kaku.
+biarkan mengalir seperti percakapan nyata.
 """
 
 model = genai.GenerativeModel(active_model_name)
