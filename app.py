@@ -23,7 +23,7 @@ except Exception as e:
 
 # --- 2. SETTING MODEL (SESUAI DAFTAR KAMU) ---
 # Kita pakai Gemini 2.5 Flash (Sesuai hasil scan)
-active_model_name = "models/gemini-flash-latest"
+active_model_name = "models/gemini-pro-latest"
 
 # --- 3. FUNGSI DATABASE (HYBRID + WIB) ---
 def save_to_sheet(nama_user, nama_almarhum, hubungan, pesan_terakhir):
