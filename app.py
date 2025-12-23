@@ -148,4 +148,4 @@ if prompt := st.chat_input(f"Sampaikan rindu pada {soul_name}..."):
             st.session_state.messages.append({"role": "assistant", "content": response_text})
             
         except Exception as e:
-            message_placeholder.error("Maaf, koneksi batin terputus (Server Busy). Coba lagi.")
+            message_placeholder.error(f"⚠️ ERROR ASLI DARI GOOGLE: {e}")
